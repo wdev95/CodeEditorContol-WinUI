@@ -10,6 +10,8 @@ public class EditAction
    public int AffectedStartLine { get; set; } = -1;
    public List<string> OldLines { get; set; }
    public List<string> NewLines { get; set; }
+   public List<string> OldSavedTexts { get; set; }
+   public List<string> NewSavedTexts { get; set; }
    public List<string> SavedTexts { get; set; }
    public override string ToString() => TextInvolved;
 }

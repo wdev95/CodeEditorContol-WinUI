@@ -61,6 +61,21 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	if (action == null) return false;
 	string involved = action.TextInvolved ?? string.Empty;
 	Place start = action.Selection?.VisualStart ?? new Place(0, 0);
+	if (action.OldLines != null && action.NewLines != null)
+	{
+	 int sline = Math.Max(0, Math.Min(action.AffectedStartLine, Lines.Count));
+	 for (int i = 0; i < action.NewLines.Count && sline < Lines.Count; i++) Lines.RemoveAt(sline);
+	 for (int i = 0; i < action.OldLines.Count; i++)
+	 {
+	  var nl = new Line(Language) { LineNumber = sline + 1 + i };
+       if (action.OldSavedTexts != null && i < action.OldSavedTexts.Count) nl.SavedText = action.OldSavedTexts[i];
+	  nl.SetLineText(action.OldLines[i]);
+	  Lines.Insert(sline + i, nl);
+	 }
+       RecalcLineNumbers(sline);
+	 Selection = action.Selection ?? new Range(new Place(0, sline));
+	 return true;
+	}
 	if (involved == "\n")
 	{
 	 if (action.EditActionType is EditActionType.Add or EditActionType.Paste)
@@ -125,20 +140,6 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	  return true;
 	 }
 	}
-	if (action.OldLines != null && action.NewLines != null)
-	{
-	 int sline = Math.Max(0, Math.Min(action.AffectedStartLine, Lines.Count));
-	 for (int i = 0; i < action.NewLines.Count && sline < Lines.Count; i++) Lines.RemoveAt(sline);
-	 for (int i = 0; i < action.OldLines.Count; i++)
-	 {
-	  var nl = new Line(Language) { LineNumber = sline + 1 + i };
-	  nl.SetLineText(action.OldLines[i]);
-	  Lines.Insert(sline + i, nl);
-	 }
-	 RecalcLineNumbers();
-	 Selection = action.Selection ?? new Range(new Place(0, sline));
-	 return true;
-	}
 	return false;
   }
   catch { return false; }
@@ -151,6 +152,22 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	if (action == null) return false;
 	string involved = action.TextInvolved ?? string.Empty;
 	Place start = action.Selection?.VisualStart ?? new Place(0, 0);
+	if (action.NewLines != null && action.AffectedStartLine >= 0)
+	{
+	 int sl = Math.Max(0, Math.Min(action.AffectedStartLine, Lines.Count));
+	 int oldCount = action.OldLines?.Count ?? 0;
+	 for (int i = 0; i < oldCount && sl < Lines.Count; i++) Lines.RemoveAt(sl);
+	 for (int i = 0; i < action.NewLines.Count; i++)
+	 {
+	  var nl = new Line(Language) { LineNumber = sl + 1 + i };
+       if (action.NewSavedTexts != null && i < action.NewSavedTexts.Count) nl.SavedText = action.NewSavedTexts[i];
+	  nl.SetLineText(action.NewLines[i]);
+	  Lines.Insert(sl + i, nl);
+	 }
+       RecalcLineNumbers(sl);
+	 Selection = action.Selection ?? new Range(new Place(0, sl));
+	 return true;
+	}
 	if (involved == "\n")
 	{
 	 if (action.EditActionType is EditActionType.Add or EditActionType.Paste)
@@ -172,8 +189,9 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 {
 	  if (start.iLine < 0 || start.iLine + 1 >= Lines.Count) return false;
 	  var cur = Lines[start.iLine];
+	  var nextText = Lines[start.iLine + 1].LineText;
 	  Lines.RemoveAt(start.iLine + 1);
-	  cur.SetLineText(cur.LineText + Lines[start.iLine].LineText);
+	  cur.SetLineText(cur.LineText + nextText);
 	  RecalcLineNumbers();
 	  Selection = new Range(start);
 	  return true;
@@ -214,21 +232,6 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	  return true;
 	 }
 	}
-	if (action.NewLines != null && action.AffectedStartLine >= 0)
-	{
-	 int sl = Math.Max(0, Math.Min(action.AffectedStartLine, Lines.Count));
-	 int oldCount = action.OldLines?.Count ?? 0;
-	 for (int i = 0; i < oldCount && sl < Lines.Count; i++) Lines.RemoveAt(sl);
-	 for (int i = 0; i < action.NewLines.Count; i++)
-	 {
-	  var nl = new Line(Language) { LineNumber = sl + 1 + i };
-	  nl.SetLineText(action.NewLines[i]);
-	  Lines.Insert(sl + i, nl);
-	 }
-	 RecalcLineNumbers();
-	 Selection = action.Selection ?? new Range(new Place(0, sl));
-	 return true;
-	}
 	return false;
   }
   catch { return false; }
@@ -248,6 +251,8 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	  _suppressClearRedoOnNextAdd = true;
 	  EditActionHistory.RemoveAt(EditActionHistory.Count - 1);
 	  RedoActionHistory.Add(last);
+	  if (IsWrappingEnabled) CalculateLineWraps(0, Math.Max(1, Lines.Count));
+	  UpdateText();
 	  await DrawText(false, true);
 	 }
 	 return;
@@ -257,33 +262,37 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	int end = EditActionHistory.Count - 1;
 	var undone = new List<EditAction>();
 	bool failed = false;
- for (int i = end; i >= index; i--)
- {
+	for (int i = end; i >= index; i--)
+	{
 	 if (TryUndoSingleAction(EditActionHistory[i])) undone.Add(EditActionHistory[i]);
 	 else { failed = true; break; }
- }
- if (!failed)
- {
+	}
+	if (!failed)
+	{
 	 for (int i = end; i >= index; i--)
 	 {
 	  RedoActionHistory.Add(EditActionHistory[i]);
 	  EditActionHistory.RemoveAt(i);
 	 }
+	 if (IsWrappingEnabled) CalculateLineWraps(0, Math.Max(1, Lines.Count));
+	 UpdateText();
 	 await DrawText(false, true);
- }
- else
- {
+	}
+	else
+	{
 	 foreach (var a in Enumerable.Reverse(undone)) TryRedoSingleAction(a);
+	 if (IsWrappingEnabled) CalculateLineWraps(0, Math.Max(1, Lines.Count));
+	 UpdateText();
 	 await DrawText(false, true);
- }
- }
- catch (Exception ex) { ErrorOccured?.Invoke(this, new ErrorEventArgs(ex)); }
- finally
- {
+	}
+  }
+  catch (Exception ex) { ErrorOccured?.Invoke(this, new ErrorEventArgs(ex)); }
+  finally
+  {
 	CanUndo = EditActionHistory.Count > 0;
 	CanRedo = RedoActionHistory.Count > 0;
 	checkUnsavedChanges();
- }
+  }
  }
 
  /// <summary>Redoes the last undone action.</summary>
@@ -298,6 +307,8 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 _suppressClearRedoOnNextAdd = true;
 	 EditActionHistory.Add(action);
 	 RedoActionHistory.Remove(action);
+	 if (IsWrappingEnabled) CalculateLineWraps(0, Math.Max(1, Lines.Count));
+	 UpdateText();
 	 await DrawText(false, true);
 	}
   }
@@ -307,7 +318,7 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	CanUndo = EditActionHistory.Count > 0;
 	CanRedo = RedoActionHistory.Count > 0;
 	checkUnsavedChanges();
- }
+  }
  }
 
  /// <summary>Toggles line comments on the selected lines.</summary>
@@ -316,7 +327,9 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
   int tstart = Selection.VisualStart.iLine;
   int tcount = Selection.VisualEnd.iLine - tstart + 1;
   var oldLines = new List<string>();
+      var oldSavedTexts = new List<string>();
   for (int li = tstart; li < tstart + tcount && li < Lines.Count; li++) oldLines.Add(Lines[li].LineText);
+    for (int li = tstart; li < tstart + tcount && li < Lines.Count; li++) oldSavedTexts.Add(Lines[li].SavedText);
   Place start = Selection.Start, end = Selection.End;
   for (int iline = 0; iline < SelectedLines.Count; iline++)
   {
@@ -347,8 +360,10 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
   CanvasScrollbarMarkers.Invalidate();
   LinesChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Lines)));
   var newLines = new List<string>();
+      var newSavedTexts = new List<string>();
   for (int li = tstart; li < tstart + tcount && li < Lines.Count; li++) newLines.Add(Lines[li].LineText);
-  EditActionHistory.Add(new() { EditActionType = EditActionType.Paste, Selection = Selection, TextInvolved = Language.LineComment, AffectedStartLine = tstart, OldLines = oldLines, NewLines = newLines });
+    for (int li = tstart; li < tstart + tcount && li < Lines.Count; li++) newSavedTexts.Add(Lines[li].SavedText);
+		EditActionHistory.Add(new() { EditActionType = EditActionType.Paste, Selection = Selection, TextInvolved = Language.LineComment, AffectedStartLine = tstart, OldLines = oldLines, NewLines = newLines, OldSavedTexts = oldSavedTexts, NewSavedTexts = newSavedTexts });
  }
 
  private async void TextAction_Delete(Range selection, bool cut = false)
@@ -373,29 +388,29 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 {
 	  if (end.iLine == startPlace.iLine)
 	  {
-	   Lines[iLine].SetLineText(Lines[iLine].LineText.Remove(startPlace.iChar, end.iChar - startPlace.iChar));
+		Lines[iLine].SetLineText(Lines[iLine].LineText.Remove(startPlace.iChar, end.iChar - startPlace.iChar));
 	  }
 	  else if (iLine == startPlace.iLine)
 	  {
-	   if (startPlace.iChar < Lines[iLine].Count)
-		Lines[iLine].SetLineText(Lines[iLine].LineText.Remove(startPlace.iChar));
+		if (startPlace.iChar < Lines[iLine].Count)
+		 Lines[iLine].SetLineText(Lines[iLine].LineText.Remove(startPlace.iChar));
 	  }
 	  else if (iLine == end.iLine)
 	  {
-	   if (end.iChar == Lines[iLine - removedlines].Count - 1)
-	   {
-		Lines.RemoveAt(iLine - removedlines);
-	   }
-	   else
-	   {
-		storetext = Lines[iLine - removedlines].LineText.Substring(end.iChar);
-		Lines.RemoveAt(iLine - removedlines);
-	   }
+		if (end.iChar == Lines[iLine - removedlines].Count - 1)
+		{
+		 Lines.RemoveAt(iLine - removedlines);
+		}
+		else
+		{
+		 storetext = Lines[iLine - removedlines].LineText.Substring(end.iChar);
+		 Lines.RemoveAt(iLine - removedlines);
+		}
 	  }
 	  else
 	  {
-	   Lines.RemoveAt(iLine - removedlines);
-	   removedlines += 1;
+		Lines.RemoveAt(iLine - removedlines);
+		removedlines += 1;
 	  }
 	 }
 	 if (!string.IsNullOrEmpty(storetext))
@@ -407,8 +422,8 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 
 	 await DrawText(false, true);
 	}
- }
- catch (Exception ex) { ErrorOccured?.Invoke(this, new ErrorEventArgs(ex)); }
+  }
+  catch (Exception ex) { ErrorOccured?.Invoke(this, new ErrorEventArgs(ex)); }
  }
 
  private void TextAction_Find()
@@ -430,14 +445,16 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 if (dpv.Contains(StandardDataFormats.Text)) text += await dpv.GetTextAsync();
 	}
 	else text = texttopaste;
-	int pasteStart = (placetopaste ?? CursorPlace).iLine;
-	var pastedlines = (text ?? string.Empty).Replace("\r\n", "\n").Split('\n', StringSplitOptions.None);
-	int pasteCount = Math.Max(1, pastedlines.Length);
-	var oldLines = new List<string>();
-	for (int li = pasteStart; li < pasteStart + pasteCount && li < Lines.Count; li++) oldLines.Add(Lines[li].LineText);
-	var action = new EditAction { EditActionType = EditActionType.Paste, Selection = Selection, TextInvolved = text, AffectedStartLine = pasteStart, OldLines = oldLines };
-	EditActionHistory.Add(action);
+	text = (text ?? string.Empty).Replace("\r\n", "\n").Replace("\r", "\n");
 	Place place = placetopaste ?? CursorPlace;
+	int pasteStart = place.iLine;
+	var pastedlines = text.Split('\n', StringSplitOptions.None);
+	var oldLines = new List<string>();
+      var oldSavedTexts = new List<string>();
+	if (pasteStart >= 0 && pasteStart < Lines.Count) oldLines.Add(Lines[pasteStart].LineText);
+      if (pasteStart >= 0 && pasteStart < Lines.Count) oldSavedTexts.Add(Lines[pasteStart].SavedText);
+		var action = new EditAction { EditActionType = EditActionType.Paste, Selection = new Range(place), TextInvolved = text, AffectedStartLine = pasteStart, OldLines = oldLines, OldSavedTexts = oldSavedTexts };
+	EditActionHistory.Add(action);
 	if (IsSelection && place < Selection.VisualStart && dragDropModifiers != DragDropModifiers.Control)
 	{
 	 TextAction_Delete(Selection);
@@ -445,7 +462,6 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	}
 	Language lang = Language;
 	int i = 0;
-	text = text.Replace("\r\n", "\n");
 	int tabcount = Lines[place.iLine].Indents;
 	string stringtomove = "";
 	string[] pastedLinesLocal = text.Split('\n', StringSplitOptions.None);
@@ -484,9 +500,12 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 iCharPosition = CursorPlace.iChar;
 	}
 	var newLines = new List<string>();
+     var newSavedTexts = new List<string>();
 	int newCount = Math.Max(1, pastedLinesLocal.Length);
 	for (int li = pasteStart; li < pasteStart + newCount && li < Lines.Count; li++) newLines.Add(Lines[li].LineText);
+      for (int li = pasteStart; li < pasteStart + newCount && li < Lines.Count; li++) newSavedTexts.Add(Lines[li].SavedText);
 	action.NewLines = newLines;
+    action.NewSavedTexts = newSavedTexts;
 	await textChanged();
 	await DrawText(false, true);
   }

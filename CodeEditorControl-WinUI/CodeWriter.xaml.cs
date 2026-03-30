@@ -46,6 +46,7 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
  private bool _pendingTextUpdate;
  private bool _deferDrawDuringLoad = true;
  private bool _deferredDrawRequested;
+ private bool _startNewAddActionOnNextChar;
 
  public CodeWriter()
  {
@@ -742,29 +743,27 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	  IsSuggestingOptions = false;
 	 }
 
-    if (args.Character == ' ')
-    {
-     // delta: only this line
-     var del = CreateLineDeltas(CursorPlace.iLine, 1);
-     // merge like normal characters if possible
-     if (EditActionHistory.Count > 0)
-     {
-      var last = EditActionHistory.Last();
-      if (last.EditActionType == EditActionType.Add &&
-          last.Selection?.VisualStart.iLine == CursorPlace.iLine &&
-          (last.Selection?.VisualStart.iChar ?? 0) + (last.TextInvolved?.Length ?? 0) == CursorPlace.iChar)
-      {
-       last.TextInvolved += " ";
-      }
-      else
-      {
-       EditActionHistory.Add(new() { EditActionType = EditActionType.Add, TextInvolved = " ", Selection = Selection });
-      }
-     }
-     else
-     {
-      EditActionHistory.Add(new() { EditActionType = EditActionType.Add, TextInvolved = " ", Selection = Selection });
-     }
+   if (args.Character == ' ')
+	 {
+	  if (EditActionHistory.Count > 0)
+	  {
+		var last = EditActionHistory.Last();
+		if (last.EditActionType == EditActionType.Add &&
+			last.Selection?.VisualStart.iLine == CursorPlace.iLine &&
+			(last.Selection?.VisualStart.iChar ?? 0) + (last.TextInvolved?.Length ?? 0) == CursorPlace.iChar)
+		{
+		 last.TextInvolved += " ";
+		}
+		else
+		{
+		 EditActionHistory.Add(new() { EditActionType = EditActionType.Add, TextInvolved = " ", Selection = Selection });
+		}
+	  }
+	  else
+	  {
+		EditActionHistory.Add(new() { EditActionType = EditActionType.Add, TextInvolved = " ", Selection = Selection });
+	  }
+	  _startNewAddActionOnNextChar = true;
 	  if (!IsSuggestingOptions)
 	  {
 		IsSuggesting = false;
@@ -773,24 +772,29 @@ public partial class CodeWriter : UserControl, INotifyPropertyChanged
 	 }
 	 else
 	 {
-      if (EditActionHistory.Count > 0)
-      {
-        var last = EditActionHistory.Last();
-        if (last.EditActionType == EditActionType.Add &&
-            last.Selection?.VisualStart.iLine == CursorPlace.iLine &&
-            (last.Selection?.VisualStart.iChar ?? 0) + (last.TextInvolved?.Length ?? 0) == CursorPlace.iChar)
-        {
-          last.TextInvolved += args.Character.ToString();
-        }
-        else
-        {
-          EditActionHistory.Add(new() { TextInvolved = args.Character.ToString(), EditActionType = EditActionType.Add, Selection = Selection });
-        }
-      }
-      else
-      {
-        EditActionHistory.Add(new() { TextInvolved = args.Character.ToString(), EditActionType = EditActionType.Add, Selection = Selection });
-      }
+		if (_startNewAddActionOnNextChar)
+		{
+		 EditActionHistory.Add(new() { TextInvolved = args.Character.ToString(), EditActionType = EditActionType.Add, Selection = Selection });
+		 _startNewAddActionOnNextChar = false;
+		}
+		else if (EditActionHistory.Count > 0)
+		{
+		  var last = EditActionHistory.Last();
+		  if (last.EditActionType == EditActionType.Add &&
+				last.Selection?.VisualStart.iLine == CursorPlace.iLine &&
+				(last.Selection?.VisualStart.iChar ?? 0) + (last.TextInvolved?.Length ?? 0) == CursorPlace.iChar)
+		  {
+			 last.TextInvolved += args.Character.ToString();
+		  }
+		  else
+		  {
+			 EditActionHistory.Add(new() { TextInvolved = args.Character.ToString(), EditActionType = EditActionType.Add, Selection = Selection });
+		  }
+		}
+		else
+		{
+		  EditActionHistory.Add(new() { TextInvolved = args.Character.ToString(), EditActionType = EditActionType.Add, Selection = Selection });
+		}
 	 }
 
 	 // --- apply text change to model ---
